@@ -217,8 +217,8 @@ class CustomAgent:
             else:
                 state_dict = torch.load(load_from, map_location='cpu')
             self.model.load_state_dict(state_dict)
-        except:
-            print("Failed to load checkpoint...")
+        except Exception as e:
+            print("Failed to load checkpoint...", e)
 
     def select_additional_infos(self) -> EnvInfos:
         """
@@ -678,7 +678,7 @@ class CustomAgent:
                 save_to = self.model_checkpoint_path + '/' + self.experiment_tag + "_episode_" + str(self.current_episode) + ".pt"
                 if not os.path.isdir(self.model_checkpoint_path):
                     os.mkdir(self.model_checkpoint_path)
-                torch.save(self.model.state_dict(), save_to)
+                torch.save(self.model.state_dict(), save_to, _use_new_zipfile_serialization=False)
                 print("========= saved checkpoint =========")
 
         self.current_episode += 1
