@@ -87,7 +87,7 @@ class FastUniLSTM(torch.nn.Module):
         _, idx_sort = torch.sort(lengths, dim=0, descending=True)
         _, idx_unsort = torch.sort(idx_sort, dim=0)
 
-        lengths = list(lengths[idx_sort])
+        lengths = lengths[idx_sort]
         idx_sort = torch.autograd.Variable(idx_sort)
         idx_unsort = torch.autograd.Variable(idx_unsort)
 
@@ -95,7 +95,7 @@ class FastUniLSTM(torch.nn.Module):
         x = x.index_select(0, idx_sort)
 
         # remove non-zero rows, and remember how many zeros
-        n_nonzero = np.count_nonzero(lengths)
+        n_nonzero = np.count_nonzero(lengths.to("cpu").to(torch.int))
         n_zero = batch_size - n_nonzero
         if n_zero != 0:
             lengths = lengths[:n_nonzero]
@@ -105,7 +105,7 @@ class FastUniLSTM(torch.nn.Module):
         x = x.transpose(0, 1)
 
         # Pack it up
-        rnn_input = torch.nn.utils.rnn.pack_padded_sequence(x, lengths)
+        rnn_input = torch.nn.utils.rnn.pack_padded_sequence(x, lengths.to("cpu").to(torch.int))
 
         # Encode all layers
         outputs = [rnn_input]

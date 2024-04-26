@@ -22,14 +22,14 @@ import urllib
 
 
 NB_EPISODES = 10
-MAX_EPISODE_STEPS = 100
+MAX_EPISODE_STEPS = 20
 TIMEOUT = 6 * 3600  # 6 hours
 PORT = 29592
 DEFAULT_IMAGE = "tavianator/textworld-codalab"
 
 # List of additional information available during evaluation.
 AVAILABLE_INFORMATION = textworld.EnvInfos(
-    max_score=True, has_won=True, has_lost=True,                    # Handicap 0
+    max_score=True, won=True, lost=True,                            # Handicap 0
     description=True, inventory=True, objective=True,               # Handicap 1
     verbs=True, command_templates=True,                             # Handicap 2
     entities=True,                                                  # Handicap 3
@@ -195,8 +195,9 @@ def _play_game(agent_class, gamefile):
     _validate_requested_infos(requested_infos)
 
     # Turn on flags needed for the evaluation.
-    requested_infos.has_won = True
-    requested_infos.has_lost = True
+    requested_infos.won = True
+    requested_infos.lost = True
+    requested_infos.score = True
     requested_infos.max_score = True
 
     stats = {}
@@ -207,9 +208,9 @@ def _play_game(agent_class, gamefile):
     name = "test_{}".format(hash(gamefile))
     env_id = textworld.gym.register_games([gamefile], requested_infos,
                                             max_episode_steps=MAX_EPISODE_STEPS,
-                                            name=name)
-    env_id = textworld.gym.make_batch(env_id, batch_size=1)
-    env = gym.make(env_id)
+                                            name=name,
+                                            batch_size=1)
+    env = textworld.gym.make(env_id)
 
     for no_episode in range(NB_EPISODES):
         obs, infos = env.reset()
@@ -218,13 +219,17 @@ def _play_game(agent_class, gamefile):
         scores = [0] * len(obs)
         dones = [False] * len(obs)
         steps = [0] * len(obs)
+        i = 0
         while not all(dones):
             # Increase step counts.
             steps = [step + int(not done) for step, done in zip(steps, dones)]
 
             commands = agent.act(obs, scores, dones, infos)
+            if i % 10 == 0:
+                print(commands)
             all_commands.append(commands)
             obs, scores, dones, infos = env.step(commands)
+            i += 1
 
         # Let the agent knows the game is done.
         agent.act(obs, scores, dones, infos)
@@ -234,8 +239,8 @@ def _play_game(agent_class, gamefile):
         stats["runs"][no_episode]["score"] = scores[0]
         stats["runs"][no_episode]["steps"] = steps[0]
         stats["runs"][no_episode]["commands"] = [cmds[0] for cmds in all_commands]
-        stats["runs"][no_episode]["has_won"] = infos["has_won"][0]
-        stats["runs"][no_episode]["has_lost"] = infos["has_lost"][0]
+        stats["runs"][no_episode]["won"] = infos["won"][0]
+        stats["runs"][no_episode]["lost"] = infos["lost"][0]
 
     env.close()
     if hasattr(agent, "close"):
@@ -508,25 +513,22 @@ def main():
         args.nb_processes = 1
         args.verbose = True
 
-    if args.in_docker:
-        args.submission_dir = os.path.abspath(args.submission_dir)
-        args.games_dir = os.path.abspath(args.games_dir)
-        args.output = os.path.abspath(args.output)
+    args.submission_dir = os.path.abspath(args.submission_dir)
+    args.games_dir = os.path.abspath(args.games_dir)
+    args.output = os.path.abspath(args.output)
 
-        if args.listen is not None:
-            os.chdir(args.submission_dir)  # Needed to load local files (e.g. vocab.txt)
-            sys.path = [args.submission_dir] + sys.path  # Prepend to PYTHONPATH
-            from custom_agent import CustomAgent
-            _serve(CustomAgent, args)
-        elif args.remote is not None:
-            _run_evaluation(functools.partial(_RemoteAgent, host=args.remote), args)
-        else:
-            os.chdir(args.submission_dir)  # Needed to load local files (e.g. vocab.txt)
-            sys.path = [args.submission_dir] + sys.path  # Prepend to PYTHONPATH
-            from custom_agent import CustomAgent
-            _run_evaluation(CustomAgent, args)
+    if args.listen is not None:
+        os.chdir(args.submission_dir)  # Needed to load local files (e.g. vocab.txt)
+        sys.path = [args.submission_dir] + sys.path  # Prepend to PYTHONPATH
+        from custom_agent import CustomAgent
+        _serve(CustomAgent, args)
+    elif args.remote is not None:
+        _run_evaluation(functools.partial(_RemoteAgent, host=args.remote), args)
     else:
-        _dockerize(args)
+        os.chdir(args.submission_dir)  # Needed to load local files (e.g. vocab.txt)
+        sys.path = [args.submission_dir] + sys.path  # Prepend to PYTHONPATH
+        from custom_agent import CustomAgent
+        _run_evaluation(CustomAgent, args)
 
 if __name__ == "__main__":
     main()
