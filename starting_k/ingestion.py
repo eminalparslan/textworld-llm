@@ -219,17 +219,14 @@ def _play_game(agent_class, gamefile):
         scores = [0] * len(obs)
         dones = [False] * len(obs)
         steps = [0] * len(obs)
-        i = 0
         while not all(dones):
             # Increase step counts.
             steps = [step + int(not done) for step, done in zip(steps, dones)]
 
             commands = agent.act(obs, scores, dones, infos)
-            if i % 10 == 0:
-                print(commands)
             all_commands.append(commands)
             obs, scores, dones, infos = env.step(commands)
-            i += 1
+            env.render()
 
         # Let the agent knows the game is done.
         agent.act(obs, scores, dones, infos)

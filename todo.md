@@ -8,12 +8,12 @@
       - It uses a replay buffer. Maybe I can just keep such a buffer in the LLM context?
 - [ ] Use HF TRL and PEFT libraries to fine-tune
 - [ ] Experiments
-  - Just LLM
-  - LLM w/ RL fine-tuning
-  - LLM embeddings w/ DRRN and/or LSTM-DQN
-  - Just LSTM-DQN
+  - [x] Just LSTM-DQN
+  - [x] Just LLM
+  - [ ] LLM w/ RL fine-tuning
+  - [ ] LLM embeddings w/ DRRN and/or LSTM-DQN
 
-Question: How can RL direct a LM to environments with languistic state/action spaces.
+Question: How can RL direct a LM to environments with linguistic state/action spaces.
 
 TBGs have language action and state space. Policy needs to map from state to action. LLMs do this. They will have some base common knowledge. Test with prompting. They can be fine tuned with the reward signal. Like RLHF but for different goal. Compare with traditional techniques imbued with embedding knowledge or BERT?
 

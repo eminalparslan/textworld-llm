@@ -1,5 +1,5 @@
-score: 19
+score: 55
 max_score: 640
-adjusted_score: 12.35
-nb_steps: 1940
+adjusted_score: 35.75
+nb_steps: 1985
 handicap: 4
