@@ -4,12 +4,12 @@ from textworld import EnvInfos
 
 from peft.tuners.lora import LoraConfig
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, create_reference_model
-from transformers import AutoTokenizer
-import transformers
+from transformers import AutoTokenizer, BitsAndBytesConfig
 import torch
+import bitsandbytes as bnb
+from accelerate import Accelerator
 
 from collections import deque
-
 
 
 class CustomAgent:
@@ -21,15 +21,31 @@ class CustomAgent:
 
         model_id = "meta-llama/Llama-2-7b-chat-hf"
 
+        self.acc_config = Accelerator()
+
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+        )
+
         lora_config = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
-        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(model_id, peft_config=lora_config, load_in_8bit=True).to("cuda:0")
+        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(
+            model_id,
+            peft_config=lora_config,
+            quantization_config=bnb_config,
+            device_map={"": self.acc_config.local_process_index}
+        )
+        # , add_eos_token=True, use_fast=True
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
-        self.tokenizer.add_special_token({"pad_token": "<pad>"})
+        self.tokenizer.add_special_tokens({"pad_token": "<pad>"})
         self.model.pretrained_model.resize_token_embeddings(len(self.tokenizer))
 
         self.reference_model = create_reference_model(self.model)
 
-        self.ppo_config = PPOConfig(batch_size=16, mini_batch_size=16)
+        self.ppo_config = PPOConfig(batch_size=2, mini_batch_size=2, optimize_cuda_cache=True)
+        #optimizer = bnb.optim.Adam8bit(filter(lambda p: p.requires_grad, self.model.parameters()), lr=0.0000141)
         self.ppo_trainer = PPOTrainer(self.ppo_config, self.model, self.reference_model, self.tokenizer)
 
         # prompt adapted from: https://github.com/KhoomeiK/LlamaGym/blob/92d7827bc11a53441dcd6bcb4d2ddc6daeb542e0/examples/text-world.py#L15
@@ -37,6 +53,9 @@ class CustomAgent:
 
         self.chat = deque(maxlen=11)
 
+        self.queries = []
+        self.responses = []
+        self.scores = [] # aka rewards
 
     def train(self) -> None:
         """ Tell the agent it is in training mode. """
@@ -178,12 +197,13 @@ class CustomAgent:
 
         self.chat.append({"role": "user", "content": obs})
 
+        # TODO: add initial observation to system prompt
         system = {"role": "system", "content": self.system_prompt}
 
         prompt = self.tokenizer(
             self.tokenizer.apply_chat_template([system, *self.chat], tokenize=False, add_generation_prompt=True),
             return_tensors="pt"
-        ).to("cuda:0")
+        ).to(self.acc_config.device)
 
         outputs = self.model.generate(
             inputs=prompt.input_ids,
@@ -191,20 +211,44 @@ class CustomAgent:
             top_p=0.6,
             top_k=0,
             temperature=0.9,
+            eos_token_id=self.tokenizer.eos_token_id,
             max_new_tokens=50,
         )
 
-        command = self.tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        command = command.split("[/INST]")[-1].strip()
+        output = self.tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        output = output.split("[/INST]")[-1].strip()
 
-        self.chat.append({"role": "assistant", "content": command})
-
-        if "command: " in command.lower():
-            result = command.lower().split("command: ")[-1]
+        if "command: " in output.lower():
+            command = output.lower().split("command: ")[-1]
             # HACK: sometimes LLM will output unwanted text after command
-            result = result.split("\n")[0]
+            command = command.split("\n")[0]
         else:
             # FIXME: find an alternative to this
-            result = "wait"
+            #   Randomize so it doesn't loop?
+            command = "wait"
 
-        return [result]
+        self.chat.append({"role": "assistant", "content": f"command: {command}"})
+
+        if self.mode == "train":
+            chat = self.tokenizer.apply_chat_template([self.chat[-2], self.chat[-1]], tokenize=False, add_generation_prompt=True)
+            inst_token = "[/INST] "
+            idx = chat.rfind(inst_token) + len(inst_token)
+            query = self.tokenizer(chat[:idx], return_tensors="pt").input_ids[0].to(self.acc_config.device)
+            response = self.tokenizer(chat[idx:], return_tensors="pt").input_ids[0].to(self.acc_config.device)
+            score = torch.tensor(scores[0], dtype=torch.float).to(self.acc_config.device)
+            self.queries.append(query)
+            self.responses.append(response)
+            self.scores.append(score)
+
+            batch_size = self.ppo_config.batch_size
+            if len(self.queries) >= batch_size:
+                queries, self.queries = self.queries[:batch_size], self.queries[batch_size:]
+                responses, self.responses = self.responses[:batch_size], self.responses[batch_size:]
+                rewards, self.scores = self.scores[:batch_size], self.scores[batch_size:]
+
+                stats = self.ppo_trainer.step(queries, responses, rewards)
+                print("Stats: ", end="")
+                self.ppo_trainer.log_stats(stats, {"query": queries, "response": responses}, rewards)
+
+
+        return [command]

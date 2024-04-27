@@ -10,6 +10,8 @@
 - [ ] Experiments
   - [x] Just LSTM-DQN
   - [x] Just LLM
+    - [ ] Try out different handicaps
+      - Right now it only uses observations and ignores the infos dict
   - [ ] LLM w/ RL fine-tuning
   - [ ] LLM embeddings w/ DRRN and/or LSTM-DQN
 

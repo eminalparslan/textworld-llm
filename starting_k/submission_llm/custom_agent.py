@@ -22,13 +22,12 @@ class CustomAgent:
         self.system_prompt = "You are playing a text-based game with a cooking theme. You will receive observations about the current state of the game and respond with commands. Here are some example commands: 'go west', 'inventory', 'drop teacup', 'examine counter', 'fry the apple on the stove', 'open door', 'look'. These commands may or may not work, and there are many commands not listed here. When responding, first reason about the game state to decide the best action and then say 'command: <your command>'. Only respond with the command and don't say anything else, even when you are told your commands aren't recognized."
         self.chat = deque(maxlen=11)
 
-        model = "meta-llama/Llama-2-7b-chat-hf"
-        self.tokenizer = AutoTokenizer.from_pretrained(model)
+        model_id = "meta-llama/Llama-2-7b-chat-hf"
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         self.pipeline = transformers.pipeline(
             "text-generation",
-            model=model,
-            # FIXME: bfloat16 instead of float16?
-            torch_dtype=torch.float16,
+            model=model_id,
+            torch_dtype=torch.bfloat16,
             device_map="auto",
         )
 
@@ -187,7 +186,7 @@ class CustomAgent:
             num_return_sequences=1,
             eos_token_id=self.tokenizer.eos_token_id,
             batch_size=1,
-            max_new_tokens = 50,
+            max_new_tokens=50,
         )
 
         if not sequences:

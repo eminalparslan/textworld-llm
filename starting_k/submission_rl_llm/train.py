@@ -62,6 +62,8 @@ def train(game_files):
                 commands = agent.act(obs, scores, dones, infos)
                 obs, scores, dones, infos = env.step(commands)
 
+                env.render()
+
             # Let the agent knows the game is done.
             agent.act(obs, scores, dones, infos)
 
