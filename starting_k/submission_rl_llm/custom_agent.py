@@ -45,7 +45,6 @@ class CustomAgent:
         self.reference_model = create_reference_model(self.model)
 
         self.ppo_config = PPOConfig(batch_size=2, mini_batch_size=2, optimize_cuda_cache=True)
-        #optimizer = bnb.optim.Adam8bit(filter(lambda p: p.requires_grad, self.model.parameters()), lr=0.0000141)
         self.ppo_trainer = PPOTrainer(self.ppo_config, self.model, self.reference_model, self.tokenizer)
 
         # prompt adapted from: https://github.com/KhoomeiK/LlamaGym/blob/92d7827bc11a53441dcd6bcb4d2ddc6daeb542e0/examples/text-world.py#L15
@@ -192,7 +191,10 @@ class CustomAgent:
             self._start_episode(observations, infos)
 
         # NOTE: this code assumes a batch_size of 1
+        assert len(observations) == 1
+
         obs = observations[0]
+        # Remove TextWorld introduction
         obs = obs.split("$$$$ \n\n")[-1]
 
         self.chat.append({"role": "user", "content": obs})
@@ -215,18 +217,20 @@ class CustomAgent:
             max_new_tokens=50,
         )
 
+        assert len(outputs) == 1
         output = self.tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         output = output.split("[/INST]")[-1].strip()
 
         if "command: " in output.lower():
             command = output.lower().split("command: ")[-1]
-            # HACK: sometimes LLM will output unwanted text after command
+            # HACK: sometimes LLM will output unwanted text after command in new line
             command = command.split("\n")[0]
         else:
             # FIXME: find an alternative to this
-            #   Randomize so it doesn't loop?
+            #   Randomize so it doesn't get in a 'wait' loop?
             command = "wait"
 
+        # Keep only the command part of the response
         self.chat.append({"role": "assistant", "content": f"command: {command}"})
 
         if self.mode == "train":
@@ -247,8 +251,8 @@ class CustomAgent:
                 rewards, self.scores = self.scores[:batch_size], self.scores[batch_size:]
 
                 stats = self.ppo_trainer.step(queries, responses, rewards)
-                print("Stats: ", end="")
                 self.ppo_trainer.log_stats(stats, {"query": queries, "response": responses}, rewards)
+                print()
 
 
         return [command]
