@@ -22,11 +22,14 @@ class CustomAgent:
 
         self.system_prompt = "You are playing a text-based game with a cooking theme. You will receive observations about the current state of the game and respond with commands. Here are some example commands: 'examine counter', 'inventory', 'go north', 'pick up the knife', 'fry the apple on the stove', 'open door', 'look', and 'goal' to remind yourself of the goal. These commands might not work and there are many commands not listed here. When responding, first reason about the game state to decide the best action to reach the goal and then say 'command: <your command>'. Only respond with the command and don't say anything else, even when you are told your commands aren't recognized."
 
+        # store the last 10 chats (+1 for system prompt)
         self.chat = deque(maxlen=11)
 
         self.current_episode = 0
-        self.save_frequency = 100
+        # how often model should be saved during training
+        self.save_frequency = 50
 
+        # store last query and response
         self.query = None
         self.response = None
 
@@ -104,16 +107,16 @@ class CustomAgent:
         """ Initialize the agent. """
         self._initialized = True
 
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+        )
+
+        model_id = "meta-llama/Llama-2-7b-chat-hf"
+
         if self.mode == "train":
-            model_id = "meta-llama/Llama-2-7b-chat-hf"
-
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-            )
-
             lora_config = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
             self.model = AutoModelForCausalLMWithValueHead.from_pretrained(
                 model_id,
@@ -121,11 +124,8 @@ class CustomAgent:
                 quantization_config=bnb_config,
                 device_map="auto",
             )
-            # , add_eos_token=True, use_fast=True
             self.tokenizer = AutoTokenizer.from_pretrained(model_id)
             self.tokenizer.pad_token = self.tokenizer.eos_token
-            # self.tokenizer.add_special_tokens({"pad_token": "<pad>"})
-            # self.model.pretrained_model.resize_token_embeddings(len(self.tokenizer))
 
             # self.reference_model = create_reference_model(self.model)
             self.ppo_config = PPOConfig(
@@ -137,28 +137,24 @@ class CustomAgent:
             )
             self.ppo_trainer = PPOTrainer(self.ppo_config, self.model, None, self.tokenizer)
         else:
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-            )
+            tuend_model_id = None
+            tuned_model_id = "saved_models/ft-400"
 
-            # model_id = "saved_models/ft-400"
-            model_id = "meta-llama/Llama-2-7b-chat-hf"
+            if tuned_model_id is not None:
+                model_id = tuned_model_id
 
-            # self.model = AutoPeftModelForCausalLM.from_pretrained(
-            #     model_id,
-            #     device_map="auto",
-            #     quantization_config=bnb_config,
-            #     # offload_folder="./offload"
-            # )
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                device_map="auto",
-                quantization_config=bnb_config,
-                # offload_folder="./offload"
-            )
+                self.model = AutoPeftModelForCausalLM.from_pretrained(
+                    model_id,
+                    device_map="auto",
+                    quantization_config=bnb_config,
+                    # offload_folder="./offload"
+                )
+            else:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    device_map="auto",
+                    quantization_config=bnb_config,
+                )
             self.tokenizer = AutoTokenizer.from_pretrained(model_id)
 
     def _start_episode(self, obs: List[str], infos: Dict[str, List[Any]]) -> None:
@@ -189,12 +185,12 @@ class CustomAgent:
 
         if self.mode == "train" and self.current_episode % self.save_frequency == 0:
             checkpoint_dir = "./saved_models"
+            finetune_base_name = "ft"
             if not os.path.isdir(checkpoint_dir):
                 os.mkdir(checkpoint_dir)
-            checkpoint_path = f"{checkpoint_dir}/ft-{self.current_episode}"
+            checkpoint_path = f"{checkpoint_dir}/{finetune_base_name}-{self.current_episode}"
             print("****** Saving pretrained model *************************")
             self.ppo_trainer.save_pretrained(checkpoint_path, save_embedding_layer=True)
-            print("****** Done saving pretrained model ********************")
 
         self.current_episode += 1
 
@@ -252,31 +248,27 @@ class CustomAgent:
             return_tensors="pt"
         ).to("cuda")
 
+        generation_kwargs = {
+            "do_sample": True,
+            "top_p": 1.0,
+            "top_k": 0,
+            "pad_token_id": self.tokenizer.eos_token_id,
+            "min_length": -1,
+            "max_new_tokens": 50,
+            # temperature=0.9,
+            # repetition_penalty=1.1,
+        }
+
         if self.mode == "train":
             self.query = prompt.input_ids[0]
             responses = self.ppo_trainer.generate(
                 self.query,
                 batch_size=1,
                 return_prompt=False,
-                do_sample=True,
-                top_p=1.0,
-                top_k=0,
-                # temperature=0.9,
-                pad_token_id=self.tokenizer.eos_token_id,
-                min_length=-1,
-                max_new_tokens=50,
-                # repetition_penalty=1.1,
+                **generation_kwargs
             )
         else:
-            responses = self.model.generate(
-                prompt.input_ids,
-                do_sample=True,
-                top_p=1.0,
-                top_k=0,
-                pad_token_id=self.tokenizer.eos_token_id,
-                min_length=-1,
-                max_new_tokens=50,
-            )
+            responses = self.model.generate(prompt.input_ids, **generation_kwargs)
 
         assert len(responses) == 1
         self.response = responses[0]
@@ -289,11 +281,9 @@ class CustomAgent:
             # HACK: sometimes LLM will output unwanted text after command in new line
             command = command.split("\n")[0]
         else:
-            # FIXME: find an alternative to this
-            #   Randomize so it doesn't get in a 'wait' loop?
             command = "wait"
 
-        # Keep only the command part of the response
+        # Keep only the actual command part of the response
         self.chat.append({"role": "assistant", "content": f"command: {command}"})
 
         return [command]
