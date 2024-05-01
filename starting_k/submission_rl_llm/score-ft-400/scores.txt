@@ -1,0 +1,5 @@
+score: 43
+max_score: 640
+adjusted_score: 27.95
+nb_steps: 1958
+handicap: 4

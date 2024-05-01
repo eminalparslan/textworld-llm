@@ -17,8 +17,6 @@ class CustomAgent:
         self._initialized = False
         self._epsiode_has_started = False
 
-        # TODO: few-shot examples
-        # prompt adapted from: https://github.com/KhoomeiK/LlamaGym/blob/92d7827bc11a53441dcd6bcb4d2ddc6daeb542e0/examples/text-world.py#L15
         self.system_prompt = "You are playing a text-based game with a cooking theme. You will receive observations about the current state of the game and respond with commands. Here are some example commands: 'go west', 'inventory', 'drop teacup', 'examine counter', 'fry the apple on the stove', 'open door', 'look'. These commands may or may not work, and there are many commands not listed here. When responding, first reason about the game state to decide the best action and then say 'command: <your command>'. Only respond with the command and don't say anything else, even when you are told your commands aren't recognized."
         self.chat = deque(maxlen=11)
 
@@ -184,7 +182,7 @@ class CustomAgent:
             top_k=0,
             temperature=0.9,
             num_return_sequences=1,
-            eos_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=self.tokenizer.eos_token_id,
             batch_size=1,
             max_new_tokens=50,
         )

@@ -4,3 +4,6 @@ venv/
 .DS_Store
 Feedback 1.txt
 Feedback 2.txt
+wandb/
+saved_models/
+offload/

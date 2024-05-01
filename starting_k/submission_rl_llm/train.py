@@ -44,7 +44,7 @@ def train(game_files):
                                           batch_size=batch_size)
     env = textworld.gym.make(env_id)
 
-    for epoch_no in range(1, 500 + 1):
+    for epoch_no in range(1, 100 + 1):
         stats = {
             "scores": [],
             "steps": [],
@@ -63,6 +63,21 @@ def train(game_files):
                 obs, scores, dones, infos = env.step(commands)
 
                 env.render()
+
+                scores = list(scores)
+
+                if "You lost" in obs[0]:
+                    print("LOST (game): negative reward applied")
+                    scores[0] -= 5
+
+                # if steps[0] == MAX_EPISODE_STEPS:
+                #     print("LOST (time): negative reward applied")
+                #     scores[0] -= 0.5
+
+                if commands[0] == "wait":
+                    print("PENALTY: wait")
+                    # NOTE: "wait" is the default action when the model fails to return a command
+                    scores[0] -= 0.5
 
             # Let the agent knows the game is done.
             agent.act(obs, scores, dones, infos)

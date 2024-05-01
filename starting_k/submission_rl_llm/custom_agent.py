@@ -3,11 +3,12 @@ from typing import List, Dict, Any, Optional
 from textworld import EnvInfos
 
 from peft.tuners.lora import LoraConfig
+from peft.auto import AutoPeftModelForCausalLM
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, create_reference_model
-from transformers import AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoTokenizer, BitsAndBytesConfig, AutoModelForCausalLM
 import torch
-import bitsandbytes as bnb
-from accelerate import Accelerator
+import wandb
+import os
 
 from collections import deque
 
@@ -19,42 +20,15 @@ class CustomAgent:
         self._initialized = False
         self._epsiode_has_started = False
 
-        model_id = "meta-llama/Llama-2-7b-chat-hf"
-
-        self.acc_config = Accelerator()
-
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-        )
-
-        lora_config = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
-        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(
-            model_id,
-            peft_config=lora_config,
-            quantization_config=bnb_config,
-            device_map={"": self.acc_config.local_process_index}
-        )
-        # , add_eos_token=True, use_fast=True
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
-        self.tokenizer.add_special_tokens({"pad_token": "<pad>"})
-        self.model.pretrained_model.resize_token_embeddings(len(self.tokenizer))
-
-        self.reference_model = create_reference_model(self.model)
-
-        self.ppo_config = PPOConfig(batch_size=2, mini_batch_size=2, optimize_cuda_cache=True)
-        self.ppo_trainer = PPOTrainer(self.ppo_config, self.model, self.reference_model, self.tokenizer)
-
-        # prompt adapted from: https://github.com/KhoomeiK/LlamaGym/blob/92d7827bc11a53441dcd6bcb4d2ddc6daeb542e0/examples/text-world.py#L15
-        self.system_prompt = "You are playing a text-based game with a cooking theme. You will receive observations about the current state of the game and respond with commands. Here are some example commands: 'go west', 'inventory', 'drop teacup', 'examine counter', 'fry the apple on the stove', 'open door', 'look'. These commands may or may not work, and there are many commands not listed here. When responding, first reason about the game state to decide the best action and then say 'command: <your command>'. Only respond with the command and don't say anything else, even when you are told your commands aren't recognized."
+        self.system_prompt = "You are playing a text-based game with a cooking theme. You will receive observations about the current state of the game and respond with commands. Here are some example commands: 'examine counter', 'inventory', 'go north', 'pick up the knife', 'fry the apple on the stove', 'open door', 'look', and 'goal' to remind yourself of the goal. These commands might not work and there are many commands not listed here. When responding, first reason about the game state to decide the best action to reach the goal and then say 'command: <your command>'. Only respond with the command and don't say anything else, even when you are told your commands aren't recognized."
 
         self.chat = deque(maxlen=11)
 
-        self.queries = []
-        self.responses = []
-        self.scores = [] # aka rewards
+        self.current_episode = 0
+        self.save_frequency = 100
+
+        self.query = None
+        self.response = None
 
     def train(self) -> None:
         """ Tell the agent it is in training mode. """
@@ -130,6 +104,63 @@ class CustomAgent:
         """ Initialize the agent. """
         self._initialized = True
 
+        if self.mode == "train":
+            model_id = "meta-llama/Llama-2-7b-chat-hf"
+
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+            )
+
+            lora_config = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
+            self.model = AutoModelForCausalLMWithValueHead.from_pretrained(
+                model_id,
+                peft_config=lora_config,
+                quantization_config=bnb_config,
+                device_map="auto",
+            )
+            # , add_eos_token=True, use_fast=True
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            # self.tokenizer.add_special_tokens({"pad_token": "<pad>"})
+            # self.model.pretrained_model.resize_token_embeddings(len(self.tokenizer))
+
+            # self.reference_model = create_reference_model(self.model)
+            self.ppo_config = PPOConfig(
+                batch_size=1,
+                mini_batch_size=1,
+                optimize_cuda_cache=True,
+                kl_penalty="abs",
+                log_with="wandb",
+            )
+            self.ppo_trainer = PPOTrainer(self.ppo_config, self.model, None, self.tokenizer)
+        else:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+            )
+
+            # model_id = "saved_models/ft-400"
+            model_id = "meta-llama/Llama-2-7b-chat-hf"
+
+            # self.model = AutoPeftModelForCausalLM.from_pretrained(
+            #     model_id,
+            #     device_map="auto",
+            #     quantization_config=bnb_config,
+            #     # offload_folder="./offload"
+            # )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                device_map="auto",
+                quantization_config=bnb_config,
+                # offload_folder="./offload"
+            )
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+
     def _start_episode(self, obs: List[str], infos: Dict[str, List[Any]]) -> None:
         """
         Prepare the agent for the upcoming episode.
@@ -143,8 +174,6 @@ class CustomAgent:
 
         self._epsiode_has_started = True
 
-        # [You can insert code here.]
-
     def _end_episode(self, obs: List[str], scores: List[int], infos: Dict[str, List[Any]]) -> None:
         """
         Tell the agent the episode has terminated.
@@ -157,6 +186,17 @@ class CustomAgent:
         self._epsiode_has_started = False
 
         self.chat.clear()
+
+        if self.mode == "train" and self.current_episode % self.save_frequency == 0:
+            checkpoint_dir = "./saved_models"
+            if not os.path.isdir(checkpoint_dir):
+                os.mkdir(checkpoint_dir)
+            checkpoint_path = f"{checkpoint_dir}/ft-{self.current_episode}"
+            print("****** Saving pretrained model *************************")
+            self.ppo_trainer.save_pretrained(checkpoint_path, save_embedding_layer=True)
+            print("****** Done saving pretrained model ********************")
+
+        self.current_episode += 1
 
         print("Episode is over:")
         print(f"\t{scores=}")
@@ -183,6 +223,11 @@ class CustomAgent:
             The states for finished games are simply copy over until all
             games are done.
         """
+        if self.mode == "train" and self.query is not None and self.response is not None:
+            reward = torch.tensor(scores[0], dtype=torch.float)
+            stats = self.ppo_trainer.step([self.query], [self.response], [reward])
+            wandb.log(stats)
+
         if all(dones):
             self._end_episode(observations, scores, infos)
             return  # Nothing to return.
@@ -205,20 +250,38 @@ class CustomAgent:
         prompt = self.tokenizer(
             self.tokenizer.apply_chat_template([system, *self.chat], tokenize=False, add_generation_prompt=True),
             return_tensors="pt"
-        ).to(self.acc_config.device)
+        ).to("cuda")
 
-        outputs = self.model.generate(
-            inputs=prompt.input_ids,
-            do_sample=True,
-            top_p=0.6,
-            top_k=0,
-            temperature=0.9,
-            eos_token_id=self.tokenizer.eos_token_id,
-            max_new_tokens=50,
-        )
+        if self.mode == "train":
+            self.query = prompt.input_ids[0]
+            responses = self.ppo_trainer.generate(
+                self.query,
+                batch_size=1,
+                return_prompt=False,
+                do_sample=True,
+                top_p=1.0,
+                top_k=0,
+                # temperature=0.9,
+                pad_token_id=self.tokenizer.eos_token_id,
+                min_length=-1,
+                max_new_tokens=50,
+                # repetition_penalty=1.1,
+            )
+        else:
+            responses = self.model.generate(
+                prompt.input_ids,
+                do_sample=True,
+                top_p=1.0,
+                top_k=0,
+                pad_token_id=self.tokenizer.eos_token_id,
+                min_length=-1,
+                max_new_tokens=50,
+            )
 
-        assert len(outputs) == 1
-        output = self.tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        assert len(responses) == 1
+        self.response = responses[0]
+
+        output = self.tokenizer.decode(self.response, skip_special_tokens=True, clean_up_tokenization_spaces=False)
         output = output.split("[/INST]")[-1].strip()
 
         if "command: " in output.lower():
@@ -232,27 +295,5 @@ class CustomAgent:
 
         # Keep only the command part of the response
         self.chat.append({"role": "assistant", "content": f"command: {command}"})
-
-        if self.mode == "train":
-            chat = self.tokenizer.apply_chat_template([self.chat[-2], self.chat[-1]], tokenize=False, add_generation_prompt=True)
-            inst_token = "[/INST] "
-            idx = chat.rfind(inst_token) + len(inst_token)
-            query = self.tokenizer(chat[:idx], return_tensors="pt").input_ids[0].to(self.acc_config.device)
-            response = self.tokenizer(chat[idx:], return_tensors="pt").input_ids[0].to(self.acc_config.device)
-            score = torch.tensor(scores[0], dtype=torch.float).to(self.acc_config.device)
-            self.queries.append(query)
-            self.responses.append(response)
-            self.scores.append(score)
-
-            batch_size = self.ppo_config.batch_size
-            if len(self.queries) >= batch_size:
-                queries, self.queries = self.queries[:batch_size], self.queries[batch_size:]
-                responses, self.responses = self.responses[:batch_size], self.responses[batch_size:]
-                rewards, self.scores = self.scores[:batch_size], self.scores[batch_size:]
-
-                stats = self.ppo_trainer.step(queries, responses, rewards)
-                self.ppo_trainer.log_stats(stats, {"query": queries, "response": responses}, rewards)
-                print()
-
 
         return [command]
