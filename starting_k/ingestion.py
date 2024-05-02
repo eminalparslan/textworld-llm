@@ -482,7 +482,7 @@ def main():
     parser.add_argument("submission_dir")
     parser.add_argument("games_dir")
     parser.add_argument("output", nargs='?', default="stats.json")
-    parser.add_argument("--nb-processes", type=int)
+    parser.add_argument("--nb-processes", default=1, type=int)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -492,19 +492,6 @@ def main():
                " at the root of your submission zip file.")
         parser.error(msg)
 
-    metadata = {}
-    submission_metadata = os.path.join(args.submission_dir, "metadata")
-    if os.path.isdir(args.submission_dir):
-        if not os.path.isfile(submission_metadata):
-            msg = ("Can't find a 'metadata' file in your submission zip file.")
-            parser.error(msg)
-
-        with open(submission_metadata) as f:
-            for line in f:
-                key, value = line.split(":", 1)
-                metadata[key.strip()] = value.strip()
-
-    args.nb_processes = args.nb_processes or metadata.get("nb_processes") or multiprocessing.cpu_count()
     args.nb_processes = int(args.nb_processes)
     if args.debug:
         args.nb_processes = 1

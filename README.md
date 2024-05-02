@@ -21,11 +21,11 @@ The directory `starting_k/` contains different agents:
 
 This directory also contains `ingestion.py` which is used to test the agents as follows:
 
-`python3 ingestion.py ./<submission directory> ./<directory of games to test on>`
+`$ python3 ingestion.py ./<submission directory> ./<directory of games to test on>`
 
 This will output a `stats.json` file containing the scores the agent received for each game. You can get the overall score using `score.py`:
 
-`python3 score.py stats.json ./<directory to store results>`
+`$ python3 score.py stats.json ./<directory to store results>`
 
 The `ingestion.py` and `score.py` scripts came from the starting kit, but were modified for ease-of-use.
 

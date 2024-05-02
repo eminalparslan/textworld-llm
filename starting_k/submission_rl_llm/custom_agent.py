@@ -137,7 +137,7 @@ class CustomAgent:
             )
             self.ppo_trainer = PPOTrainer(self.ppo_config, self.model, None, self.tokenizer)
         else:
-            tuend_model_id = None
+            tuned_model_id = None
             tuned_model_id = "saved_models/ft-400"
 
             if tuned_model_id is not None:
